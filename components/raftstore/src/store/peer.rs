@@ -3307,7 +3307,48 @@ where
                 self.read_local(ctx, req, cb);
                 return false;
             }
-            Ok(RequestPolicy::ReadIndex) => return self.read_index(ctx, req, err_resp, cb),
+            Ok(RequestPolicy::ReadIndex) => {
+                let mut stores = Vec::new();
+                let opt = disk_full_opt;
+                let mut maybe_transfer_leader = false;
+                if !self.check_proposal_normal_with_disk_usage(
+                    ctx,
+                    opt,
+                    &mut stores,
+                    &mut maybe_transfer_leader,
+                ) {
+                    if maybe_transfer_leader && !self.disk_full_peers.majority {
+                        let target_peer = self
+                            .get_store()
+                            .region()
+                            .get_peers()
+                            .iter()
+                            .find(|x| {
+                                !self.disk_full_peers.has(x.get_id())
+                                    && x.get_id() != self.peer.get_id()
+                                    && !self.down_peer_ids.contains(&x.get_id())
+                                    && !matches!(x.get_role(), PeerRole::Learner)
+                            })
+                            .cloned();
+                        if let Some(p) = target_peer {
+                            info!(
+                                "read index: try to transfer leader because of current leader disk full: region id = {}, peer id = {}; target peer id = {}",
+                                self.region_id,
+                                self.peer.get_id(),
+                                p.get_id()
+                            );
+                            self.pre_transfer_leader(&p);
+                        } else {
+                            info!(
+                                "read index: try to transfer leader but no target peer selected: region id = {}, peer id = {};",
+                                self.region_id,
+                                self.peer.get_id()
+                            );
+                        }
+                    }
+                }
+                return self.read_index(ctx, req, err_resp, cb);
+            }
             Ok(RequestPolicy::ProposeTransferLeader) => {
                 return self.propose_transfer_leader(ctx, req, cb);
             }
@@ -3345,13 +3386,19 @@ where
                             })
                             .cloned();
                         if let Some(p) = target_peer {
-                            debug!(
+                            info!(
                                 "try to transfer leader because of current leader disk full: region id = {}, peer id = {}; target peer id = {}",
                                 self.region_id,
                                 self.peer.get_id(),
                                 p.get_id()
                             );
                             self.pre_transfer_leader(&p);
+                        } else {
+                            info!(
+                                "try to transfer leader but no target peer selected: region id = {}, peer id = {};",
+                                self.region_id,
+                                self.peer.get_id()
+                            );
                         }
                     }
                     let errmsg = format!(
@@ -4734,6 +4781,12 @@ where
 
         // If all followers diskusage normal, then allowed.
         if self.disk_full_peers.is_empty() {
+            if !matches!(ctx.self_disk_usage, DiskUsage::Normal) {
+                info!(
+                    "self disk full not in disk full peers";
+                    "peer_id" => self.peer_id(),
+                );
+            }
             return true;
         }
 
