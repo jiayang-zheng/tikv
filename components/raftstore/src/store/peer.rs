@@ -3368,7 +3368,7 @@ where
                     &mut stores,
                     &mut maybe_transfer_leader,
                 ) {
-                    if maybe_transfer_leader {
+                    if maybe_transfer_leader && !self.disk_full_peers.majority {
                         let target_peer = self
                             .get_store()
                             .region()
@@ -4817,6 +4817,7 @@ where
                     "self disk full not in disk full peers";
                     "peer_id" => self.peer_id(),
                 );
+                disk_full_stores.push(ctx.store.id);
                 *maybe_transfer_leader = true;
             }
             return true;
@@ -4840,6 +4841,7 @@ where
                     "self disk full but not majority";
                     "peer_id" => self.peer_id(),
                 );
+                disk_full_stores.push(ctx.store.id);
                 *maybe_transfer_leader = true;
             }
             return true;
