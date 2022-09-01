@@ -3430,7 +3430,13 @@ where
                 self.read_local(ctx, req, cb);
                 return false;
             }
-            Ok(RequestPolicy::ReadIndex) => return self.read_index(ctx, req, err_resp, cb),
+            Ok(RequestPolicy::ReadIndex) => {
+                let disk_full_result = self.check_normal_proposal_with_disk_full_opt(ctx, disk_full_opt, "read index");
+                match disk_full_result {
+                    Ok(_) => return self.read_index(ctx, req, err_resp, cb),
+                    Err(e) => Err(e),
+                }
+            }
             Ok(RequestPolicy::ProposeTransferLeader) => {
                 return self.propose_transfer_leader(ctx, req, cb);
             }
@@ -3439,7 +3445,7 @@ where
                 if req.has_admin_request() {
                     disk_full_opt = DiskFullOpt::AllowedOnAlmostFull;
                 }
-                self.check_normal_proposal_with_disk_full_opt(ctx, disk_full_opt)
+                self.check_normal_proposal_with_disk_full_opt(ctx, disk_full_opt, "propose normal")
                     .and_then(|_| self.propose_normal(ctx, req))
             }
             Ok(RequestPolicy::ProposeConfChange) => self.propose_conf_change(ctx, &req),
@@ -4822,6 +4828,7 @@ where
         &mut self,
         ctx: &mut PollContext<EK, ER, T>,
         disk_full_opt: DiskFullOpt,
+        operator: &str,
     ) -> Result<()> {
         let leader_allowed = match ctx.self_disk_usage {
             DiskUsage::Normal => true,
@@ -4848,11 +4855,12 @@ where
                     })
                     .cloned();
                 if let Some(p) = target_peer {
-                    debug!(
+                    info!(
                         "try to transfer leader because of current leader disk full";
                         "region_id" => self.region_id,
                         "peer_id" => self.peer.get_id(),
                         "target_peer_id" => p.get_id(),
+                        "operator" => operator,
                     );
                     self.pre_transfer_leader(&p);
                 }
@@ -4860,10 +4868,26 @@ where
         } else {
             // Check followers.
             if self.disk_full_peers.is_empty() {
+                if !matches!(ctx.self_disk_usage, DiskUsage::Normal) {
+                    info!(
+                        "leader is full, but none of followers is full";
+                        "region_id" => self.region_id,
+                        "peer_id" => self.peer.get_id(),
+                        "operator" => operator,
+                    );
+                }
                 return Ok(());
             }
             if !self.dangerous_majority_set {
                 if !self.disk_full_peers.majority {
+                    if !matches!(ctx.self_disk_usage, DiskUsage::Normal) {
+                        info!(
+                            "leader is full, but not majority of peers is full";
+                            "region_id" => self.region_id,
+                            "peer_id" => self.peer.get_id(),
+                            "operator" => operator,
+                        );
+                    }
                     return Ok(());
                 }
                 // Majority peers are in disk full status but the request carries a special
