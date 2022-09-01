@@ -4817,8 +4817,8 @@ where
                     "self disk full not in disk full peers";
                     "peer_id" => self.peer_id(),
                 );
+                *maybe_transfer_leader = true;
             }
-            *maybe_transfer_leader = true;
             return true;
         }
 
@@ -4840,8 +4840,8 @@ where
                     "self disk full but not majority";
                     "peer_id" => self.peer_id(),
                 );
+                *maybe_transfer_leader = true;
             }
-            *maybe_transfer_leader = true;
             return true;
         }
 
